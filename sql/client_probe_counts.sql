@@ -1,4 +1,4 @@
-CREATE TEMP FUNCTION bucket (val FLOAT64, min_bucket INT64, max_bucket INT64, num_buckets INT64)
+CREATE TEMP FUNCTION udf_bucket (val FLOAT64, min_bucket INT64, max_bucket INT64, num_buckets INT64)
 RETURNS FLOAT64 AS (
   -- Bucket `value` into a histogram with min_bucket, max_bucket and num_buckets
   (
@@ -11,7 +11,7 @@ RETURNS FLOAT64 AS (
   )
 );
 
-CREATE TEMP FUNCTION buckets_to_map (buckets ARRAY<FLOAT64>)
+CREATE TEMP FUNCTION udf_buckets_to_map (buckets ARRAY<FLOAT64>)
 RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
   -- Given an array of values, transform them into a histogram MAP
   -- with the number of each key in the `buckets` array
@@ -25,29 +25,7 @@ RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
   )
 );
 
-CREATE TEMP FUNCTION dedupe_map_sum (map STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>)
-RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
-  -- Given a MAP with duplicate keys, de-duplicates by summing the values of duplicate keys
-  (
-    WITH summed_counts AS (
-      SELECT
-        STRUCT<key FLOAT64, value FLOAT64>(e.key, SUM(e.value)) AS record
-      FROM
-        UNNEST(map.key_value) AS e
-      GROUP BY
-        e.key
-    )
-    
-    SELECT
-      STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>(
-        ARRAY_AGG(record)
-      )
-    FROM
-      summed_counts
-  )
-);
-
-CREATE TEMP FUNCTION fill_buckets(input_map STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>, min_bucket INT64, max_bucket INT64, num_buckets INT64)
+CREATE TEMP FUNCTION udf_fill_buckets(input_map STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>, min_bucket INT64, max_bucket INT64, num_buckets INT64)
 RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
   -- Given a MAP `input_map`, fill in any missing keys with value `0.0`
   (
@@ -108,7 +86,7 @@ bucketed_scalars AS (
     min_bucket,
     max_bucket,
     num_buckets,
-    bucket(agg_value, min_bucket, max_bucket, num_buckets) AS bucket
+    udf_bucket(agg_value, min_bucket, max_bucket, num_buckets) AS bucket
   FROM
     clients_aggregates
 )
@@ -120,8 +98,8 @@ SELECT
   channel,
   metric,
   agg_type,
-  fill_buckets(
-    dedupe_map_sum(buckets_to_map(ARRAY_AGG(bucket))),
+  udf_fill_buckets(
+    udf_aggregate_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
     ANY_VALUE(min_bucket), ANY_VALUE(max_bucket), ANY_VALUE(num_buckets)
   ) AS aggregates
 FROM
