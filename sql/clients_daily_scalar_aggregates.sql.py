@@ -21,7 +21,7 @@ p.add_argument(
 )
 
 
-def generate_sql(opts, aggregates):
+def generate_sql(opts, aggregates, select_clause):
     """Create a SQL query for the clients_daily_scalar_aggregates dataset."""
 
     return textwrap.dedent(
@@ -93,36 +93,57 @@ def generate_sql(opts, aggregates):
                         ORDER BY `timestamp` ASC
                     )
             )
-
-        SELECT
-            * EXCEPT(_n)
-        FROM
-            windowed
-        WHERE
-            _n = 1
+            {select_clause}
         """
     )
 
 
-def get_histogram_probes_sql_string(probes):
-    probes_string = """
-            ARRAY<STRUCT<
-                metric STRING,
-                agg_type STRING,
-                value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>
-            >> [
-            {probes}
-        ] AS histogram_aggregates
-    """
-
+def get_histogram_probes_sql_strings(probes):
     probe_structs = []
     for probe in probes:
         probe_structs.append(
-            "('{metric}', 'summed-histogram', udf_aggregate_map_sum(ARRAY_AGG({metric}) OVER w1))".format(metric=probe)
+            "('{metric}', 'summed-histogram', ARRAY_AGG({metric}) OVER w1)".format(metric=probe)
         )
 
     probes_arr = ",\n\t\t\t".join(probe_structs)
-    return probes_string.format(probes=probes_arr)
+    probes_string = f"""
+            ARRAY<STRUCT<
+                metric STRING,
+                agg_type STRING,
+                value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>
+            >> [
+            {probes_arr}
+        ] AS histogram_aggregates
+    """
+
+    select_clause = f"""
+        SELECT
+            * EXCEPT (_n) REPLACE (
+                ARRAY(
+                SELECT AS STRUCT
+                    * REPLACE (
+                        CASE
+                        WHEN agg_type = 'summed-histogram' THEN
+                            udf_aggregate_map_sum(value)
+                        ELSE
+                            error(CONCAT('Unhandled agg_type: ', agg_type))
+                        END AS value
+                    )
+                FROM
+                    UNNEST(histogram_aggregates)
+                ) AS histogram_aggregates
+            )
+        FROM
+            windowed
+        WHERE
+            _n = 1
+    """
+
+    return {
+        "probes_string": probes_string,
+        "select_clause": select_clause
+    }
+
 
 
 def get_histogram_probes():
@@ -175,7 +196,7 @@ def get_histogram_probes():
         return set([main_summary_original_probes[probe] for probe in relevant_probes])
 
 
-def get_scalar_probes_sql_string(probes):
+def get_scalar_probes_sql_strings(probes):
     probe_structs = []
     for probe in probes:
         probe_structs.append(
@@ -217,7 +238,19 @@ def get_scalar_probes_sql_string(probes):
             ] AS scalar_aggregates
     """
 
-    return probes_string
+    select_clause = f"""
+        SELECT
+            * EXCEPT(_n)
+        FROM
+            windowed
+        WHERE
+            _n = 1
+    """
+
+    return {
+        "probes_string": probes_string,
+        "select_clause": select_clause
+    }
 
 
 def get_scalar_probes():
@@ -266,18 +299,22 @@ def get_scalar_probes():
 def main(argv, out=print):
     """Print a clients_daily_scalar_aggregates query to stdout."""
     opts = vars(p.parse_args(argv[1:]))
-    probes_sql_string = ""
+    sql_string = ""
 
     if opts['agg_type'] == 'scalar':
         scalar_probes = get_scalar_probes()
-        probes_sql_string = get_scalar_probes_sql_string(scalar_probes)
+        sql_string = get_scalar_probes_sql_strings(scalar_probes)
     elif opts['agg_type'] == 'histogram':
         histogram_probes = get_histogram_probes()
-        probes_sql_string = get_histogram_probes_sql_string(histogram_probes)
+        sql_string = get_histogram_probes_sql_strings(histogram_probes)
     else:
         raise ValueError("agg-type must be one of scalar/histogram")
 
-    out(generate_sql(opts, probes_sql_string))
+    out(generate_sql(
+        opts,
+        sql_string["probes_string"],
+        sql_string["select_clause"])
+    )
 
 
 if __name__ == "__main__":
