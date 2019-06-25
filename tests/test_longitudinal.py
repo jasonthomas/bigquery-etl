@@ -1,12 +1,20 @@
 import textwrap
 import subprocess
+import sys
 
 import pytest
 
 
 def test_basic():
     results = subprocess.check_output(
-        ["sql/longitudinal.sql.py", "--tablename", "foo", "--to", "20190401"]
+        [
+            sys.executable,
+            "templates/longitudinal.sql.py",
+            "--tablename",
+            "foo",
+            "--to",
+            "20190401",
+        ]
     ).decode("ascii")
     assert results == textwrap.dedent(
         """
@@ -35,7 +43,8 @@ def test_everything():
 
     results = subprocess.check_output(
         [
-            "sql/longitudinal.sql.py",
+            sys.executable,
+            "templates/longitudinal.sql.py",
             "--tablename",
             "foo",
             "--to",
@@ -82,7 +91,8 @@ def test_column_conflict():
     with pytest.raises(subprocess.CalledProcessError) as e:
         subprocess.check_output(
             [
-                "sql/longitudinal.sql.py",
+                sys.executable,
+                "templates/longitudinal.sql.py",
                 "--tablename",
                 "foo",
                 "--to",
