@@ -37,6 +37,17 @@ def generate_sql(opts, aggregates, select_clause):
               GROUP BY
         key) AS key_value));
 
+        CREATE TEMP FUNCTION
+          udf_aggregate_keyed_map_sum(maps ANY TYPE) AS (STRUCT(ARRAY(
+              SELECT
+                AS STRUCT key,
+                udf_aggregate_map_sum(ARRAY_AGG(value)) AS value
+              FROM
+                UNNEST(maps),
+                UNNEST(key_value)
+              GROUP BY
+        key) AS key_value));
+
         WITH
             -- normalize client_id and rank by document_id
             numbered_duplicates AS (
@@ -98,7 +109,10 @@ def generate_sql(opts, aggregates, select_clause):
     )
 
 
-def get_histogram_probes_sql_strings(probes):
+def get_histogram_probes_sql_strings(
+    probes,
+    histogram_type
+):
     probe_structs = []
     for probe in probes:
         probe_structs.append(
@@ -106,16 +120,27 @@ def get_histogram_probes_sql_strings(probes):
         )
 
     probes_arr = ",\n\t\t\t".join(probe_structs)
+    value_arr = (
+        "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>>>>"
+        if histogram_type == 'multi-histogram'
+        else "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>"
+    )
     probes_string = f"""
             ARRAY<STRUCT<
                 metric STRING,
                 agg_type STRING,
-                value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>
+                {value_arr}
             >> [
             {probes_arr}
         ] AS histogram_aggregates
     """
 
+
+    agg_function = (
+        "udf_aggregate_keyed_map_sum"
+        if histogram_type == 'multi-histogram'
+        else "udf_aggregate_map_sum"
+    )
     select_clause = f"""
         SELECT
             * EXCEPT (_n) REPLACE (
@@ -124,7 +149,7 @@ def get_histogram_probes_sql_strings(probes):
                     * REPLACE (
                         CASE
                         WHEN agg_type = 'summed-histogram' THEN
-                            udf_aggregate_map_sum(value)
+                            {agg_function}(value)
                         ELSE
                             error(CONCAT('Unhandled agg_type: ', agg_type))
                         END AS value
@@ -145,8 +170,20 @@ def get_histogram_probes_sql_strings(probes):
     }
 
 
+def get_histogram_type(keyval_fields):
+    if (len(keyval_fields) == 2 and
+        keyval_fields[0].get("type", None) == "INTEGER" and
+        keyval_fields[1].get("type", None) == "INTEGER"):
+        return "histogram"
 
-def get_histogram_probes():
+    if (len(keyval_fields) == 2 and
+        keyval_fields[0].get("type", None) == "STRING" and
+        keyval_fields[1].get("type", None) == "RECORD" and
+        keyval_fields[1]['fields'][0]['fields'][0]['type'] == "INTEGER"):
+        return "multi-histogram"
+
+
+def get_histogram_probes(histogram_type):
     # Keeps track of probe names before they're stripped of "histogram_parent_"
     # and "histogram_content_" prefixes so they can be used in the query.
     main_summary_original_probes = {}
@@ -173,15 +210,15 @@ def get_histogram_probes():
             else []
         )
 
-        if (len(keyval_fields) == 2 and
-            keyval_fields[0].get("type", None) == "INTEGER" and
-            keyval_fields[1].get("type", None) == "INTEGER"):
-            field_name = field["name"].replace(
-                "histogram_content_", "").replace(
-                "histogram_parent_", ""
-            )
-            main_summary_histograms.add(field_name)
-            main_summary_original_probes[field_name] = field["name"]
+        if histogram_type != get_histogram_type(keyval_fields):
+            continue
+
+        field_name = field["name"].replace(
+            "histogram_content_", "").replace(
+            "histogram_parent_", ""
+        )
+        main_summary_histograms.add(field_name)
+        main_summary_original_probes[field_name] = field["name"]
 
     with urllib.request.urlopen(PROBE_INFO_SERVICE) as url:
         data = json.loads(url.read().decode())
@@ -304,9 +341,9 @@ def main(argv, out=print):
     if opts['agg_type'] == 'scalar':
         scalar_probes = get_scalar_probes()
         sql_string = get_scalar_probes_sql_strings(scalar_probes)
-    elif opts['agg_type'] == 'histogram':
-        histogram_probes = get_histogram_probes()
-        sql_string = get_histogram_probes_sql_strings(histogram_probes)
+    elif opts['agg_type'] in ('histogram', 'multi-histogram'):
+        histogram_probes = get_histogram_probes(opts['agg_type'])
+        sql_string = get_histogram_probes_sql_strings(histogram_probes, opts['agg_type'])
     else:
         raise ValueError("agg-type must be one of scalar/histogram")
 
