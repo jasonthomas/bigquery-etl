@@ -235,29 +235,43 @@ def get_histogram_probes(histogram_type):
 
 def get_scalar_probes_sql_strings(probes):
     probe_structs = []
-    for probe in probes:
+    for probe in probes['scalars']:
         probe_structs.append(
             (
-                f"('{probe}', 'max', max(CAST({probe} AS INT64))"
+                f"('{probe}', 'max', max(CAST({probe} AS INT64)) "
                 "OVER w1, 0, 1000, 50)"
             )
         )
         probe_structs.append(
             (
-                f"('{probe}', 'avg', avg(CAST({probe} AS INT64))"
+                f"('{probe}', 'avg', avg(CAST({probe} AS INT64)) "
                 "OVER w1, 0, 1000, 50)"
             )
         )
         probe_structs.append(
             (
-                f"('{probe}', 'min', min(CAST({probe} AS INT64))"
+                f"('{probe}', 'min', min(CAST({probe} AS INT64)) "
                 "OVER w1, 0, 1000, 50)"
             )
         )
         probe_structs.append(
             (
-                f"('{probe}', 'sum', sum(CAST({probe} AS INT64))"
+                f"('{probe}', 'sum', sum(CAST({probe} AS INT64)) "
                 "OVER w1, 0, 1000, 50)"
+            )
+        )
+
+    for probe in probes['booleans']:
+        probe_structs.append(
+            (
+                f"('{probe}', 'false', sum(case when {probe} = False then 1 else 0 end) "
+                "OVER w1, 0, 2, 2)"
+            )
+        )
+        probe_structs.append(
+            (
+                f"('{probe}', 'true', sum(case when {probe} = True then 1 else 0 end) "
+                "OVER w1, 0, 2, 2)"
             )
         )
 
@@ -297,6 +311,8 @@ def get_scalar_probes():
     """
     project = "moz-fx-data-derived-datasets"
     main_summary_scalars = set()
+    main_summary_boolean_scalars = set()
+
     process = subprocess.Popen(
         [
             "bq",
@@ -318,6 +334,8 @@ def get_scalar_probes():
     for field in main_summary_schema:
         if field["name"].startswith("scalar_parent") and field["type"] == "INTEGER":
             main_summary_scalars.add(field["name"])
+        elif field["name"].startswith("scalar_parent") and field["type"] == "BOOLEAN":
+            main_summary_boolean_scalars.add(field["name"])
 
     # Find the intersection between relevant scalar probes
     # and those that exist in main summary
@@ -330,7 +348,10 @@ def get_scalar_probes():
                 if x.startswith("scalar/")
             ]
         )
-        return scalar_probes.intersection(main_summary_scalars)
+        return {
+            "scalars": scalar_probes.intersection(main_summary_scalars),
+            "booleans": scalar_probes.intersection(main_summary_boolean_scalars)
+        }
 
 
 def main(argv, out=print):
