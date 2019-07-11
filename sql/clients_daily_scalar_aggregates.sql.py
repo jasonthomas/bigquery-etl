@@ -139,11 +139,12 @@ def get_histogram_probes_sql_strings(
         )
 
     probes_arr = ",\n\t\t\t".join(probe_structs)
-    value_arr = (
-        "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>>>>"
-        if histogram_type == 'keyed-histogram'
-        else "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>"
-    )
+    value_arr = "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>"
+    if histogram_type == 'string-histogram':
+        value_arr = "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value INT64>>>>"
+    elif histogram_type == "keyed-histogram":
+        value_arr = "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>>>>"
+
     probes_string = f"""
             ARRAY<STRUCT<
                 metric STRING,
@@ -194,6 +195,11 @@ def get_histogram_type(keyval_fields):
         keyval_fields[0].get("type", None) == "INTEGER" and
         keyval_fields[1].get("type", None) == "INTEGER"):
         return "histogram"
+
+    if (len(keyval_fields) == 2 and
+        keyval_fields[0].get("type", None) == "STRING" and
+        keyval_fields[1].get("type", None) == "INTEGER"):
+        return "string-histogram"
 
     if (len(keyval_fields) == 2 and
         keyval_fields[0].get("type", None) == "STRING" and
@@ -476,7 +482,7 @@ def main(argv, out=print):
     if opts['agg_type'] in ('scalar', 'keyed-scalar'):
         scalar_probes = get_scalar_probes()
         sql_string = get_scalar_probes_sql_strings(scalar_probes, opts['agg_type'])
-    elif opts['agg_type'] in ('histogram', 'keyed-histogram'):
+    elif opts['agg_type'] in ('histogram', 'keyed-histogram', 'string-histogram'):
         histogram_probes = get_histogram_probes(opts['agg_type'])
         sql_string = get_histogram_probes_sql_strings(histogram_probes, opts['agg_type'])
     else:
