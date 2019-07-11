@@ -21,7 +21,14 @@ p.add_argument(
 )
 
 
-def generate_sql(opts, aggregates, select_clause):
+def generate_sql(
+    opts,
+    aggregates,
+    additional_queries,
+    additional_partitions,
+    select_clause,
+    querying_table
+):
     """Create a SQL query for the clients_daily_scalar_aggregates dataset."""
 
     return textwrap.dedent(
@@ -74,6 +81,8 @@ def generate_sql(opts, aggregates, select_clause):
                 WHERE _n = 1
             ),
 
+            {additional_queries}
+
             -- Aggregate by client_id using windows
             windowed AS (
                 SELECT
@@ -85,13 +94,18 @@ def generate_sql(opts, aggregates, select_clause):
                     app_build_id,
                     channel,
                     {aggregates}
-                FROM deduplicated
+                FROM {querying_table}
                 WINDOW
                     -- Aggregations require a framed window
                     w1 AS (
                         PARTITION BY
                             client_id,
-                            submission_date_s3
+                            submission_date_s3,
+                            os,
+                            app_version,
+                            app_build_id,
+                            channel
+                            {additional_partitions}
                         ORDER BY `timestamp` ASC ROWS BETWEEN UNBOUNDED PRECEDING
                         AND UNBOUNDED FOLLOWING
                     ),
@@ -100,7 +114,12 @@ def generate_sql(opts, aggregates, select_clause):
                     w1_unframed AS (
                         PARTITION BY
                             client_id,
-                            submission_date_s3
+                            submission_date_s3,
+                            os,
+                            app_version,
+                            app_build_id,
+                            channel
+                            {additional_partitions}
                         ORDER BY `timestamp` ASC
                     )
             )
@@ -122,7 +141,7 @@ def get_histogram_probes_sql_strings(
     probes_arr = ",\n\t\t\t".join(probe_structs)
     value_arr = (
         "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>>>>"
-        if histogram_type == 'multi-histogram'
+        if histogram_type == 'keyed-histogram'
         else "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>"
     )
     probes_string = f"""
@@ -138,7 +157,7 @@ def get_histogram_probes_sql_strings(
 
     agg_function = (
         "udf_aggregate_keyed_map_sum"
-        if histogram_type == 'multi-histogram'
+        if histogram_type == 'keyed-histogram'
         else "udf_aggregate_map_sum"
     )
     select_clause = f"""
@@ -180,8 +199,7 @@ def get_histogram_type(keyval_fields):
         keyval_fields[0].get("type", None) == "STRING" and
         keyval_fields[1].get("type", None) == "RECORD" and
         keyval_fields[1]['fields'][0]['fields'][0]['type'] == "INTEGER"):
-        return "multi-histogram"
-
+        return "keyed-histogram"
 
 def get_histogram_probes(histogram_type):
     # Keeps track of probe names before they're stripped of "histogram_parent_"
@@ -233,7 +251,95 @@ def get_histogram_probes(histogram_type):
         return set([main_summary_original_probes[probe] for probe in relevant_probes])
 
 
-def get_scalar_probes_sql_strings(probes):
+def get_keyed_scalar_probes_sql_string(probes):
+    probes_struct = []
+    for probe in probes:
+        probes_struct.append(f"('{probe}', {probe})")
+
+    probes_arr = ",\n\t\t\t".join(probes_struct)
+
+    additional_queries = f"""
+        grouped_metrics AS
+          (select
+            timestamp,
+            client_id,
+            submission_date_s3,
+            os,
+            app_version,
+            app_build_id,
+            channel,
+            ARRAY<STRUCT<
+                name STRING,
+                value STRUCT<key_value ARRAY<STRUCT<key STRING, value INT64>>>
+            >>[
+              {probes_arr}
+            ] as metrics
+          FROM deduplicated),
+
+          flattened_metrics AS
+            (SELECT
+              timestamp,
+              client_id,
+              submission_date_s3,
+              os,
+              app_version,
+              app_build_id,
+              channel,
+              metrics.name AS metric,
+              value.key AS key,
+              value.value AS value
+            FROM grouped_metrics
+            CROSS JOIN unnest(metrics) AS metrics,
+            unnest(metrics.value.key_value) AS value),
+    """
+
+    probes_string = """
+                metric,
+                key,
+                MAX(value) OVER w1 as max,
+                MIN(value) OVER w1 as min,
+                AVG(value) OVER w1 as avg,
+                SUM(value) OVER w1 as sum
+    """
+
+    select_clause = """
+        select
+              client_id,
+              submission_date,
+              os,
+              app_version,
+              app_build_id,
+              channel,
+              ARRAY_CONCAT_AGG(
+                [(metric, key, 'max', max),
+                (metric, key, 'min', min),
+                (metric, key,  'avg', avg),
+                (metric, key, 'sum', sum)
+              ]) AS scalar_aggregates
+        from windowed
+        where _n = 1
+        group by 1,2,3,4,5,6
+    """
+
+    querying_table = "flattened_metrics"
+
+    additional_partitions = """,
+                            metric,
+                            key
+    """
+
+    return {
+        "probes_string": probes_string,
+        "additional_queries": additional_queries,
+        "additional_partitions": additional_partitions,
+        "select_clause": select_clause,
+        "querying_table": querying_table
+    }
+
+def get_scalar_probes_sql_strings(probes, scalar_type):
+    if scalar_type == "keyed-scalar":
+        return get_keyed_scalar_probes_sql_string(probes['keyed'])
+
     probe_structs = []
     for probe in probes['scalars']:
         probe_structs.append(
@@ -311,6 +417,8 @@ def get_scalar_probes():
     """
     project = "moz-fx-data-derived-datasets"
     main_summary_scalars = set()
+    main_summary_record_scalars = set()
+    main_summary_boolean_record_scalars = set()
     main_summary_boolean_scalars = set()
 
     process = subprocess.Popen(
@@ -336,6 +444,11 @@ def get_scalar_probes():
             main_summary_scalars.add(field["name"])
         elif field["name"].startswith("scalar_parent") and field["type"] == "BOOLEAN":
             main_summary_boolean_scalars.add(field["name"])
+        elif field["name"].startswith("scalar_parent") and field["type"] == "RECORD":
+            if field['fields'][0]['fields'][1]['type'] == "BOOLEAN":
+                main_summary_boolean_record_scalars.add(field["name"])
+            else:
+                main_summary_record_scalars.add(field["name"])
 
     # Find the intersection between relevant scalar probes
     # and those that exist in main summary
@@ -350,7 +463,8 @@ def get_scalar_probes():
         )
         return {
             "scalars": scalar_probes.intersection(main_summary_scalars),
-            "booleans": scalar_probes.intersection(main_summary_boolean_scalars)
+            "booleans": scalar_probes.intersection(main_summary_boolean_scalars),
+            "keyed": scalar_probes.intersection(main_summary_record_scalars)
         }
 
 
@@ -359,10 +473,10 @@ def main(argv, out=print):
     opts = vars(p.parse_args(argv[1:]))
     sql_string = ""
 
-    if opts['agg_type'] == 'scalar':
+    if opts['agg_type'] in ('scalar', 'keyed-scalar'):
         scalar_probes = get_scalar_probes()
-        sql_string = get_scalar_probes_sql_strings(scalar_probes)
-    elif opts['agg_type'] in ('histogram', 'multi-histogram'):
+        sql_string = get_scalar_probes_sql_strings(scalar_probes, opts['agg_type'])
+    elif opts['agg_type'] in ('histogram', 'keyed-histogram'):
         histogram_probes = get_histogram_probes(opts['agg_type'])
         sql_string = get_histogram_probes_sql_strings(histogram_probes, opts['agg_type'])
     else:
@@ -371,7 +485,10 @@ def main(argv, out=print):
     out(generate_sql(
         opts,
         sql_string["probes_string"],
-        sql_string["select_clause"])
+        sql_string.get("additional_queries", ""),
+        sql_string.get("additional_partitions", ""),
+        sql_string["select_clause"],
+        sql_string.get("querying_table", "deduplicated"))
     )
 
 
