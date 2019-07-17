@@ -14,6 +14,7 @@ WITH
             * REPLACE(LOWER(client_id) AS client_id)
         FROM main_summary_v4
         WHERE submission_date_s3 = @submission_date
+        AND channel in ("release", "esr", "beta", "aurora", "default", "nightly")
         AND client_id IS NOT NULL
     ),
 
@@ -32,7 +33,7 @@ WITH
             submission_date_s3 as submission_date,
             client_id,
             os,
-            app_version,
+            SPLIT(app_version, '.')[OFFSET(0)] AS app_version,
             app_build_id,
             channel,
             ARRAY<STRUCT<
