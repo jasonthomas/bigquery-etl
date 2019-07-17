@@ -390,13 +390,13 @@ def get_scalar_probes_sql_strings(probes, scalar_type):
         probe_structs.append(
             (
                 f"('{probe}', 'false', sum(case when {probe} = False "
-                "then 1 else 0 end) OVER w1, 0, 2, 2)"
+                "then 1 else 0 end) OVER w1, 0, 1000, 50)"
             )
         )
         probe_structs.append(
             (
                 f"('{probe}', 'true', sum(case when {probe} = True then 1 else 0 end) "
-                "OVER w1, 0, 2, 2)"
+                "OVER w1, 0, 1000, 50)"
             )
         )
 
