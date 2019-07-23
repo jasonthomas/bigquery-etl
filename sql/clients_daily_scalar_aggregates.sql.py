@@ -339,11 +339,11 @@ def get_keyed_scalar_probes_sql_string(probes):
               app_version,
               app_build_id,
               channel,
-              ARRAY_CONCAT_AGG(
-                [(metric, key, 'max', max),
-                (metric, key, 'min', min),
-                (metric, key,  'avg', avg),
-                (metric, key, 'sum', sum)
+              ARRAY_CONCAT_AGG(ARRAY<STRUCT<metric STRING, metric_type STRING, key STRING, agg_type STRING, value FLOAT64>>
+                [(metric, 'keyed-scalar', key, 'max', max),
+                (metric, 'keyed-scalar', key, 'min', min),
+                (metric, 'keyed-scalar', key, 'avg', avg),
+                (metric, 'keyed-scalar', key, 'sum', sum)
               ]) AS scalar_aggregates
         from windowed
         where _n = 1
@@ -374,29 +374,29 @@ def get_scalar_probes_sql_strings(probes, scalar_type):
     probe_structs = []
     for probe in probes["scalars"]:
         probe_structs.append(
-            f"('{probe}', 'max', max(CAST({probe} AS INT64)) OVER w1, 0, 1000, 50)"
+            f"('{probe}', 'scalar', '', 'max', max(CAST({probe} AS INT64)) OVER w1)"
         )
         probe_structs.append(
-            f"('{probe}', 'avg', avg(CAST({probe} AS INT64)) OVER w1, 0, 1000, 50)"
+            f"('{probe}', 'scalar', '', 'avg', avg(CAST({probe} AS INT64)) OVER w1)"
         )
         probe_structs.append(
-            f"('{probe}', 'min', min(CAST({probe} AS INT64)) OVER w1, 0, 1000, 50)"
+            f"('{probe}', 'scalar', '', 'min', min(CAST({probe} AS INT64)) OVER w1)"
         )
         probe_structs.append(
-            f"('{probe}', 'sum', sum(CAST({probe} AS INT64)) OVER w1, 0, 1000, 50)"
+            f"('{probe}', 'scalar', '', 'sum', sum(CAST({probe} AS INT64)) OVER w1)"
         )
 
     for probe in probes["booleans"]:
         probe_structs.append(
             (
-                f"('{probe}', 'false', sum(case when {probe} = False "
-                "then 1 else 0 end) OVER w1, 0, 1000, 50)"
+                f"('{probe}', 'boolean', '', 'false', sum(case when {probe} = False "
+                "then 1 else 0 end) OVER w1)"
             )
         )
         probe_structs.append(
             (
-                f"('{probe}', 'true', sum(case when {probe} = True then 1 else 0 end) "
-                "OVER w1, 0, 1000, 50)"
+                f"('{probe}', 'boolean', '', 'true', sum(case when {probe} = True then 1 else 0 end) "
+                "OVER w1)"
             )
         )
 
@@ -404,11 +404,10 @@ def get_scalar_probes_sql_strings(probes, scalar_type):
     probes_string = f"""
             ARRAY<STRUCT<
                 metric STRING,
+                metric_type STRING,
+                key STRING,
                 agg_type STRING,
-                value FLOAT64,
-                min_bucket INT64,
-                max_bucket INT64,
-                num_buckets INT64
+                value FLOAT64
             >> [
                 {probes_arr}
             ] AS scalar_aggregates
