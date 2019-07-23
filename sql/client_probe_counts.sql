@@ -11,6 +11,28 @@ RETURNS FLOAT64 AS (
   )
 );
 
+CREATE TEMP FUNCTION udf_dedupe_map_sum (map STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>)
+RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
+  -- Given a MAP with duplicate keys, de-duplicates by summing the values of duplicate keys
+  (
+    WITH summed_counts AS (
+      SELECT
+        STRUCT<key FLOAT64, value FLOAT64>(e.key, SUM(e.value)) AS record
+      FROM
+        UNNEST(map.key_value) AS e
+      GROUP BY
+        e.key
+    )
+
+    SELECT
+      STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>>(
+        ARRAY_AGG(record)
+      )
+    FROM
+      summed_counts
+  )
+);
+
 CREATE TEMP FUNCTION udf_buckets_to_map (buckets ARRAY<FLOAT64>)
 RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
   -- Given an array of values, transform them into a histogram MAP
@@ -48,33 +70,7 @@ RETURNS STRUCT<key_value ARRAY<STRUCT<key FLOAT64, value FLOAT64>>> AS (
   )
 );
 
-WITH clients_aggregates AS (
-  SELECT
-    client_id,
-    os,
-    app_version,
-    app_build_id,
-    channel,
-    aggregate.metric,
-    aggregate.agg_type,
-    aggregate.min_bucket,
-    aggregate.max_bucket,
-    aggregate.num_buckets,
-    CASE agg_type
-      WHEN 'max' THEN max(value)
-      WHEN 'min' THEN min(value)
-      WHEN 'avg' THEN avg(value)
-      WHEN 'sum' THEN sum(value)
-    END AS agg_value
-  FROM
-    analysis.clients_daily_aggregates
-  CROSS JOIN
-    UNNEST(scalar_aggregates) AS aggregate
-  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-),
-
--- Each client gets assigned a bucket
-bucketed_scalars AS (
+WITH bucketed_scalars AS (
   SELECT
     client_id,
     os,
@@ -88,8 +84,9 @@ bucketed_scalars AS (
     num_buckets,
     udf_bucket(agg_value, min_bucket, max_bucket, num_buckets) AS bucket
   FROM
-    clients_aggregates
+    telemetry.clients_aggregates_v1
 )
+
 
 SELECT
   os,
@@ -99,8 +96,161 @@ SELECT
   metric,
   agg_type,
   udf_fill_buckets(
-    udf_aggregate_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-    ANY_VALUE(min_bucket), ANY_VALUE(max_bucket), ANY_VALUE(num_buckets)
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  CAST(NULL AS STRING) as os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  os,
+  CAST(NULL AS STRING) AS app_version,
+  app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  os,
+  app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  os,
+  CAST(NULL AS STRING) AS app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  CAST(NULL AS STRING) AS os,
+  app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  CAST(NULL AS STRING) AS os,
+  app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  CAST(NULL AS STRING) AS channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  os,
+  CAST(NULL AS STRING) AS app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  CAST(NULL AS STRING) AS channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  CAST(NULL AS STRING) AS os,
+  CAST(NULL AS STRING) AS app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
+  ) AS aggregates
+FROM
+  bucketed_scalars
+GROUP BY 1, 2, 3, 4, 5, 6
+
+UNION ALL
+
+SELECT
+  CAST(NULL AS STRING) AS os,
+  CAST(NULL AS STRING) AS app_version,
+  CAST(NULL AS STRING) AS app_build_id,
+  CAST(NULL AS STRING) AS channel,
+  metric,
+  agg_type,
+  udf_fill_buckets(
+    udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
+    0, 1000, 50
   ) AS aggregates
 FROM
   bucketed_scalars
