@@ -299,7 +299,7 @@ def get_keyed_scalar_probes_sql_string(probes):
             channel,
             ARRAY<STRUCT<
                 name STRING,
-                value STRUCT<key_value ARRAY<STRUCT<key STRING, value INT64>>>
+                value ARRAY<STRUCT<key STRING, value INT64>>
             >>[
               {probes_arr}
             ] as metrics
@@ -319,7 +319,7 @@ def get_keyed_scalar_probes_sql_string(probes):
               value.value AS value
             FROM grouped_metrics
             CROSS JOIN unnest(metrics) AS metrics,
-            unnest(metrics.value.key_value) AS value),
+            unnest(metrics.value) AS value),
     """
 
     probes_string = """
@@ -461,7 +461,7 @@ def get_scalar_probes():
         elif field["name"].startswith("scalar_parent") and field["type"] == "BOOLEAN":
             main_summary_boolean_scalars.add(field["name"])
         elif field["name"].startswith("scalar_parent") and field["type"] == "RECORD":
-            if field["fields"][0]["fields"][1]["type"] == "BOOLEAN":
+            if field["fields"][1]["type"] == "BOOLEAN":
                 main_summary_boolean_record_scalars.add(field["name"])
             else:
                 main_summary_record_scalars.add(field["name"])
