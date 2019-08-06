@@ -278,9 +278,7 @@ def get_histogram_probes(histogram_type):
         relevant_probes = histogram_probes.intersection(main_summary_histograms)
         return set([main_summary_original_probes[probe] for probe in relevant_probes])
 
-
-def get_keyed_scalar_probes_sql_string(probes):
-    """Put together the subsets of SQL required to query keyed scalars."""
+def _get_generic_keyed_scalar_sql(probes, value_type):
     probes_struct = []
     for probe in probes:
         probes_struct.append(f"('{probe}', {probe})")
@@ -299,7 +297,7 @@ def get_keyed_scalar_probes_sql_string(probes):
             channel,
             ARRAY<STRUCT<
                 name STRING,
-                value ARRAY<STRUCT<key STRING, value INT64>>
+                value ARRAY<STRUCT<key STRING, value {value_type}>>
             >>[
               {probes_arr}
             ] as metrics
@@ -322,7 +320,51 @@ def get_keyed_scalar_probes_sql_string(probes):
             unnest(metrics.value) AS value),
     """
 
-    probes_string = """
+    querying_table = "flattened_metrics"
+
+    additional_partitions = """,
+                            metric,
+                            key
+    """
+
+    return {
+        "additional_queries": additional_queries,
+        "additional_partitions": additional_partitions,
+        "querying_table": querying_table,
+    }
+
+def get_keyed_boolean_probes_sql_string(probes):
+    """Put together the subsets of SQL required to query keyed booleans."""
+    sql_strings = _get_generic_keyed_scalar_sql(probes, "BOOLEAN")
+    sql_strings["probes_string"] = """
+            metric,
+            key,
+            SUM(CASE WHEN value = True THEN 1 ELSE 0 END) OVER w1 AS true_col,
+            SUM(CASE WHEN value = False THEN 1 ELSE 0 END) OVER w1 AS false_col
+    """
+
+    sql_strings["select_clause"] = """
+        select
+              client_id,
+              submission_date,
+              os,
+              app_version,
+              app_build_id,
+              channel,
+              ARRAY_CONCAT_AGG(ARRAY<STRUCT<metric STRING, metric_type STRING, key STRING, agg_type STRING, value FLOAT64>>
+                [(metric, 'keyed-scalar-boolean', key, 'true', true_col),
+                (metric, 'keyed-scalar-boolean', key, 'false', false_col)
+              ]) AS scalar_aggregates
+        from windowed
+        where _n = 1
+        group by 1,2,3,4,5,6
+    """
+    return sql_strings
+
+def get_keyed_scalar_probes_sql_string(probes):
+    """Put together the subsets of SQL required to query keyed scalars."""
+    sql_strings = _get_generic_keyed_scalar_sql(probes, "INT64")
+    sql_strings["probes_string"] = """
                 metric,
                 key,
                 MAX(value) OVER w1 as max,
@@ -331,7 +373,7 @@ def get_keyed_scalar_probes_sql_string(probes):
                 SUM(value) OVER w1 as sum
     """
 
-    select_clause = """
+    sql_strings["select_clause"] = """
         select
               client_id,
               submission_date,
@@ -349,27 +391,16 @@ def get_keyed_scalar_probes_sql_string(probes):
         where _n = 1
         group by 1,2,3,4,5,6
     """
-
-    querying_table = "flattened_metrics"
-
-    additional_partitions = """,
-                            metric,
-                            key
-    """
-
-    return {
-        "probes_string": probes_string,
-        "additional_queries": additional_queries,
-        "additional_partitions": additional_partitions,
-        "select_clause": select_clause,
-        "querying_table": querying_table,
-    }
+    return sql_strings
 
 
 def get_scalar_probes_sql_strings(probes, scalar_type):
     """Put together the subsets of SQL required to query scalars or booleans."""
     if scalar_type == "keyed-scalar":
         return get_keyed_scalar_probes_sql_string(probes["keyed"])
+
+    if scalar_type == "keyed-boolean":
+        return get_keyed_boolean_probes_sql_string(probes["keyed_boolean"])
 
     probe_structs = []
     for probe in probes["scalars"]:
@@ -480,6 +511,7 @@ def get_scalar_probes():
             "scalars": scalar_probes.intersection(main_summary_scalars),
             "booleans": scalar_probes.intersection(main_summary_boolean_scalars),
             "keyed": scalar_probes.intersection(main_summary_record_scalars),
+            "keyed_boolean": scalar_probes.intersection(main_summary_boolean_record_scalars)
         }
 
 
@@ -488,7 +520,7 @@ def main(argv, out=print):
     opts = vars(p.parse_args(argv[1:]))
     sql_string = ""
 
-    if opts["agg_type"] in ("scalar", "keyed-scalar"):
+    if opts["agg_type"] in ("scalar", "keyed-scalar", "keyed-boolean"):
         scalar_probes = get_scalar_probes()
         sql_string = get_scalar_probes_sql_strings(scalar_probes, opts["agg_type"])
     elif opts["agg_type"] in ("histogram", "keyed-histogram", "string-histogram"):
