@@ -132,8 +132,7 @@ summed_bools AS
             channel,
             metric,
             metric_type,
-            key,
-            agg_type)),
+            key)),
 
 booleans AS
   (SELECT * EXCEPT(bool_true, bool_false),
