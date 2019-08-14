@@ -16,7 +16,7 @@ p = argparse.ArgumentParser()
 p.add_argument(
     "--agg-type",
     type=str,
-    help="One of scalars/histograms/booleans/events",
+    help="One of scalar/keyed-scalar/keyed-boolean",
     required=True,
 )
 
@@ -69,7 +69,9 @@ def generate_sql(
                     * REPLACE(LOWER(client_id) AS client_id)
                 FROM main_summary_v4
                 WHERE submission_date_s3 = @submission_date
-                AND channel in ("release", "esr", "beta", "aurora", "default", "nightly")
+                AND channel in (
+                    "release", "esr", "beta", "aurora", "default", "nightly"
+                )
                 AND client_id IS NOT NULL
             ),
 
@@ -333,17 +335,22 @@ def _get_generic_keyed_scalar_sql(probes, value_type):
         "querying_table": querying_table,
     }
 
+
 def get_keyed_boolean_probes_sql_string(probes):
     """Put together the subsets of SQL required to query keyed booleans."""
     sql_strings = _get_generic_keyed_scalar_sql(probes, "BOOLEAN")
-    sql_strings["probes_string"] = """
-            metric,
-            key,
-            SUM(CASE WHEN value = True THEN 1 ELSE 0 END) OVER w1 AS true_col,
-            SUM(CASE WHEN value = False THEN 1 ELSE 0 END) OVER w1 AS false_col
+    sql_strings[
+        "probes_string"
+    ] = """
+        metric,
+        key,
+        SUM(CASE WHEN value = True THEN 1 ELSE 0 END) OVER w1 AS true_col,
+        SUM(CASE WHEN value = False THEN 1 ELSE 0 END) OVER w1 AS false_col
     """
 
-    sql_strings["select_clause"] = """
+    sql_strings[
+        "select_clause"
+    ] = """
         select
               client_id,
               submission_date,
@@ -351,42 +358,63 @@ def get_keyed_boolean_probes_sql_string(probes):
               app_version,
               app_build_id,
               channel,
-              ARRAY_CONCAT_AGG(ARRAY<STRUCT<metric STRING, metric_type STRING, key STRING, agg_type STRING, value FLOAT64>>
-                [(metric, 'keyed-scalar-boolean', key, 'true', true_col),
-                (metric, 'keyed-scalar-boolean', key, 'false', false_col)
-              ]) AS scalar_aggregates
+              ARRAY_CONCAT_AGG(ARRAY<STRUCT<
+                    metric STRING,
+                    metric_type STRING,
+                    key STRING,
+                    agg_type STRING,
+                    value FLOAT64
+                >>
+                [
+                    (metric, 'keyed-scalar-boolean', key, 'true', true_col),
+                    (metric, 'keyed-scalar-boolean', key, 'false', false_col)
+                ]
+            ) AS scalar_aggregates
         from windowed
         where _n = 1
         group by 1,2,3,4,5,6
     """
     return sql_strings
 
+
 def get_keyed_scalar_probes_sql_string(probes):
     """Put together the subsets of SQL required to query keyed scalars."""
     sql_strings = _get_generic_keyed_scalar_sql(probes, "INT64")
-    sql_strings["probes_string"] = """
-                metric,
-                key,
-                MAX(value) OVER w1 as max,
-                MIN(value) OVER w1 as min,
-                AVG(value) OVER w1 as avg,
-                SUM(value) OVER w1 as sum
+    sql_strings[
+        "probes_string"
+    ] = """
+        metric,
+        key,
+        MAX(value) OVER w1 as max,
+        MIN(value) OVER w1 as min,
+        AVG(value) OVER w1 as avg,
+        SUM(value) OVER w1 as sum
     """
 
-    sql_strings["select_clause"] = """
+    sql_strings[
+        "select_clause"
+    ] = """
         select
-              client_id,
-              submission_date,
-              os,
-              app_version,
-              app_build_id,
-              channel,
-              ARRAY_CONCAT_AGG(ARRAY<STRUCT<metric STRING, metric_type STRING, key STRING, agg_type STRING, value FLOAT64>>
-                [(metric, 'keyed-scalar', key, 'max', max),
-                (metric, 'keyed-scalar', key, 'min', min),
-                (metric, 'keyed-scalar', key, 'avg', avg),
-                (metric, 'keyed-scalar', key, 'sum', sum)
-              ]) AS scalar_aggregates
+            client_id,
+            submission_date,
+            os,
+            app_version,
+            app_build_id,
+            channel,
+            ARRAY_CONCAT_AGG(ARRAY<STRUCT<
+                metric STRING,
+                metric_type STRING,
+                key STRING,
+                agg_type STRING,
+                value FLOAT64
+            >>
+                [
+                    (metric, 'keyed-scalar', key, 'max', max),
+                    (metric, 'keyed-scalar', key, 'min', min),
+                    (metric, 'keyed-scalar', key, 'avg', avg),
+                    (metric, 'keyed-scalar', key, 'sum', sum)
+                ]
+        ) AS scalar_aggregates
         from windowed
         where _n = 1
         group by 1,2,3,4,5,6
@@ -426,7 +454,8 @@ def get_scalar_probes_sql_strings(probes, scalar_type):
         )
         probe_structs.append(
             (
-                f"('{probe}', 'boolean', '', 'true', sum(case when {probe} = True then 1 else 0 end) "
+                f"('{probe}', 'boolean', '', 'true', "
+                "sum(case when {probe} = True then 1 else 0 end) "
                 "OVER w1)"
             )
         )
@@ -511,7 +540,9 @@ def get_scalar_probes():
             "scalars": scalar_probes.intersection(main_summary_scalars),
             "booleans": scalar_probes.intersection(main_summary_boolean_scalars),
             "keyed": scalar_probes.intersection(main_summary_record_scalars),
-            "keyed_boolean": scalar_probes.intersection(main_summary_boolean_record_scalars)
+            "keyed_boolean": scalar_probes.intersection(
+                main_summary_boolean_record_scalars
+            ),
         }
 
 
