@@ -130,69 +130,6 @@ def generate_sql(
     )
 
 
-def get_histogram_probes_sql_strings(probes, histogram_type):
-    """Put together the subsets of SQL required to query histograms."""
-    probe_structs = []
-    for probe in probes:
-        probe_structs.append(
-            "('{metric}', 'summed-histogram', ARRAY_AGG({metric}) OVER w1)".format(
-                metric=probe
-            )
-        )
-
-    probes_arr = ",\n\t\t\t".join(probe_structs)
-    value_arr = "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>"
-    if histogram_type == "string-histogram":
-        value_arr = (
-            "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, value INT64>>>>"
-        )
-    elif histogram_type == "keyed-histogram":
-        value_arr = (
-            "value ARRAY<STRUCT<key_value ARRAY<STRUCT<key STRING, "
-            "value STRUCT<key_value ARRAY<STRUCT<key INT64, value INT64>>>>>>>"
-        )
-
-    probes_string = f"""
-            ARRAY<STRUCT<
-                metric STRING,
-                agg_type STRING,
-                {value_arr}
-            >> [
-            {probes_arr}
-        ] AS histogram_aggregates
-    """
-
-    agg_function = (
-        "udf_aggregate_keyed_map_sum"
-        if histogram_type == "keyed-histogram"
-        else "udf_aggregate_map_sum"
-    )
-    select_clause = f"""
-        SELECT
-            * EXCEPT (_n) REPLACE (
-                ARRAY(
-                SELECT AS STRUCT
-                    * REPLACE (
-                        CASE
-                        WHEN agg_type = 'summed-histogram' THEN
-                            {agg_function}(value)
-                        ELSE
-                            error(CONCAT('Unhandled agg_type: ', agg_type))
-                        END AS value
-                    )
-                FROM
-                    UNNEST(histogram_aggregates)
-                ) AS histogram_aggregates
-            )
-        FROM
-            windowed
-        WHERE
-            _n = 1
-    """
-
-    return {"probes_string": probes_string, "select_clause": select_clause}
-
-
 def get_histogram_type(keyval_fields):
     """Return the type of histogram given its schema."""
     if (
@@ -213,72 +150,10 @@ def get_histogram_type(keyval_fields):
         len(keyval_fields) == 2
         and keyval_fields[0].get("type", None) == "STRING"
         and keyval_fields[1].get("type", None) == "RECORD"
-        and keyval_fields[1]["fields"][0]["fields"][0]["type"] == "INTEGER"
+        and keyval_fields[1]["fields"][0]["type"] == "INTEGER"
     ):
         return "keyed-histogram"
 
-
-def get_histogram_probes(histogram_type):
-    """
-    Return relevant histogram probes.
-
-    Keep track of probe names before they're stripped of "histogram_parent_"
-    and"histogram_content_" prefixes so they can be used in the query.
-    """
-    main_summary_original_probes = {}
-    project = "moz-fx-data-derived-datasets"
-    main_summary_histograms = set()
-    process = subprocess.Popen(
-        [
-            "bq",
-            "show",
-            "--schema",
-            "--format=json",
-            f"{project}:telemetry.main_summary_v4",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = process.communicate()
-    if process.returncode > 0:
-        raise Exception(
-            f"Call to bq exited non-zero: {process.returncode}", stdout, stderr
-        )
-    main_summary_schema = json.loads(stdout)
-
-    for field in main_summary_schema:
-        if not field["name"].startswith("histogram"):
-            continue
-
-        subfields = field.get("fields", [])
-        keyval_fields = (
-            subfields[0].get("fields", [])
-            if isinstance(subfields, list) and len(subfields) > 0
-            else []
-        )
-
-        if histogram_type != get_histogram_type(keyval_fields):
-            continue
-
-        field_name = (
-            field["name"]
-            .replace("histogram_content_", "")
-            .replace("histogram_parent_", "")
-        )
-        main_summary_histograms.add(field_name)
-        main_summary_original_probes[field_name] = field["name"]
-
-    with urllib.request.urlopen(PROBE_INFO_SERVICE) as url:
-        data = json.loads(url.read().decode())
-        histogram_probes = set(
-            [
-                x.replace("histogram/", "").replace(".", "_").lower()
-                for x in data.keys()
-                if x.startswith("histogram/")
-            ]
-        )
-        relevant_probes = histogram_probes.intersection(main_summary_histograms)
-        return set([main_summary_original_probes[probe] for probe in relevant_probes])
 
 def _get_generic_keyed_scalar_sql(probes, value_type):
     probes_struct = []
@@ -554,11 +429,6 @@ def main(argv, out=print):
     if opts["agg_type"] in ("scalar", "keyed-scalar", "keyed-boolean"):
         scalar_probes = get_scalar_probes()
         sql_string = get_scalar_probes_sql_strings(scalar_probes, opts["agg_type"])
-    elif opts["agg_type"] in ("histogram", "keyed-histogram", "string-histogram"):
-        histogram_probes = get_histogram_probes(opts["agg_type"])
-        sql_string = get_histogram_probes_sql_strings(
-            histogram_probes, opts["agg_type"]
-        )
     else:
         raise ValueError("agg-type must be one of scalar/histogram")
 
