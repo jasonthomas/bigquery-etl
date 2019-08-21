@@ -1,26 +1,125 @@
-CREATE TEMP FUNCTION udf_bucket (val FLOAT64, min_bucket INT64, max_bucket INT64, num_buckets INT64)
-RETURNS FLOAT64 AS (
-  -- Bucket `value` into a histogram with min_bucket, max_bucket and num_buckets
+CREATE TEMP FUNCTION udf_exponential_buckets(dmin INT64, dmax INT64, nBuckets INT64)
+RETURNS ARRAY<FLOAT64>
+LANGUAGE js AS
+'''
+  let logMax = Math.log(dmax);
+  let current = dmin;
+  let retArray = [0, current];
+    for (let bucketIndex = 2; bucketIndex < nBuckets; bucketIndex++) {
+      let logCurrent = Math.log(current);
+      let logRatio = (logMax - logCurrent) / (nBuckets - bucketIndex);
+      let logNext = logCurrent + logRatio;
+      let nextValue = parseInt(Math.floor(Math.exp(logNext) + 0.5));
+      if (nextValue > current) {
+        current = nextValue;
+      } else {
+        current++;
+      }
+      retArray[bucketIndex] = current;
+    }
+    return retArray
+''';
+
+CREATE TEMP FUNCTION udf_normalized_sum (arrs ARRAY<STRUCT<key STRING, value INT64>>)
+RETURNS ARRAY<STRUCT<key STRING, value FLOAT64>> AS (
+  -- Returns the normalized sum of the input maps.
+  -- It returns the total_count[k] / SUM(total_count)
+  -- for each key k.
   (
+    WITH total_counts AS (
+      SELECT
+        sum(a.value) AS total_count
+      FROM
+        UNNEST(arrs) AS a
+    ),
+
+    summed_counts AS (
+      SELECT
+        a.key AS k,
+        SUM(a.value) AS v
+      FROM
+        UNNEST(arrs) AS a
+      GROUP BY
+        a.key
+    ),
+
+    final_values AS (
+      SELECT
+        STRUCT<key STRING, value FLOAT64>(k, 1.0 * v / total_count) AS record
+      FROM
+        summed_counts
+      CROSS JOIN
+        total_counts
+    )
+
     SELECT
-      max(bucket)
+        ARRAY_AGG(record)
     FROM
-      unnest(GENERATE_ARRAY(min_bucket, max_bucket, (max_bucket - min_bucket) / num_buckets)) AS bucket
-    WHERE
-      val > bucket
+      final_values
   )
 );
 
-CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64)
+CREATE TEMP FUNCTION
+  udf_aggregate_map_sum(maps ANY TYPE) AS (ARRAY(
+      SELECT
+        AS STRUCT key,
+        SUM(value) AS value
+      FROM
+        UNNEST(maps),
+        UNNEST(key_value)
+      GROUP BY
+key));
+
+CREATE TEMP FUNCTION udf_bucket (
+  val FLOAT64,
+  min_bucket INT64,
+  max_bucket INT64,
+  num_buckets INT64,
+  metric_type STRING
+)
+RETURNS FLOAT64 AS (
+  -- Bucket `value` into a histogram with min_bucket, max_bucket and num_buckets
+  (WITH
+    buckets AS (
+      SELECT
+        CASE
+          WHEN metric_type = 'histogram-exponential'
+          THEN udf_exponential_buckets(min_bucket, max_bucket, num_buckets)
+          ELSE GENERATE_ARRAY(min_bucket, max_bucket,
+            CASE
+              WHEN ROUND((max_bucket - min_bucket) / num_buckets) < 1 THEN 1
+              ELSE ROUND((max_bucket - min_bucket) / num_buckets)
+            END)
+        END AS bucket_arr
+    )
+
+    SELECT max(bucket)
+    FROM buckets
+    CROSS JOIN unnest(buckets.bucket_arr) AS bucket
+    WHERE val >= bucket
+  )
+);
+
+CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64, metric_type STRING)
 RETURNS ARRAY<STRING> AS (
   (
-    WITH float_array AS (
-      SELECT GENERATE_ARRAY(min, max, (max - min) / num) AS test
+    WITH buckets AS (
+      SELECT
+        CASE
+          WHEN metric_type = 'histogram-exponential'
+          THEN udf_exponential_buckets(min, max, num)
+          ELSE
+            GENERATE_ARRAY(min, max,
+            CASE
+              WHEN ROUND((max - min) / num) < 1 THEN 1
+              ELSE ROUND((max - min) / num)
+            END)
+       END AS arr
     )
 
     SELECT ARRAY_AGG(CAST(item AS STRING))
-    FROM float_array
-    CROSS JOIN UNNEST(test) AS item
+    FROM buckets
+    CROSS JOIN UNNEST(arr) AS item
   )
 );
 
@@ -90,13 +189,103 @@ WITH bucketed_scalars AS (
     agg_type,
     CASE
       WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
-      THEN SAFE_CAST(udf_bucket(SAFE_CAST(agg_value AS FLOAT64), 0, 1000, 50) AS STRING)
+      THEN SAFE_CAST(udf_bucket(SAFE_CAST(agg_value AS FLOAT64), 0, 1000, 50, 'scalar') AS STRING)
       WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
       THEN agg_value
     END AS bucket
   FROM
     telemetry.clients_aggregates_v1
-)
+),
+
+normalized_histograms AS
+  (SELECT
+      client_id,
+      os,
+      app_version,
+      app_build_id,
+      channel,
+      bucket_range,
+      aggregate.metric as metric,
+      aggregate.metric_type AS metric_type,
+      aggregate.key AS key,
+      aggregate.agg_type as agg_type,
+      udf_normalized_sum(
+        udf_aggregate_map_sum(ARRAY_AGG(STRUCT<key_value ARRAY<STRUCT <key STRING, value INT64>>>(aggregate.value)) OVER w1)) AS aggregates
+    FROM
+      telemetry.clients_daily_histogram_aggregates_v2
+    CROSS JOIN
+      UNNEST(histogram_aggregates) AS aggregate
+    WHERE ARRAY_LENGTH(value) > 0
+    WINDOW
+        -- Aggregations require a framed window
+        w1 AS (
+            PARTITION BY
+                client_id,
+                os,
+                app_version,
+                app_build_id,
+                channel,
+                aggregate.metric,
+                aggregate.metric_type,
+                aggregate.key,
+                aggregate.agg_type)),
+
+bucketed_histograms AS
+  (SELECT
+      client_id,
+      os,
+      app_version,
+      app_build_id,
+      channel,
+      bucket_range,
+      metric,
+      metric_type,
+      normalized_histograms.key AS key,
+      agg_type,
+      udf_bucket(SAFE_CAST(agg.key AS FLOAT64), bucket_range.first_bucket, bucket_range.last_bucket, bucket_range.num_buckets, metric_type) AS bucket,
+      agg.value AS value
+  FROM normalized_histograms
+  CROSS JOIN UNNEST(aggregates) AS agg
+  WHERE bucket_range.num_buckets > 0),
+
+clients_aggregates AS
+  (SELECT
+    os,
+    app_version,
+    app_build_id,
+    channel,
+    CAST(bucket_range.first_bucket AS INT64) AS min_bucket,
+    CAST(bucket_range.last_bucket AS INT64) AS max_bucket,
+    CAST(bucket_range.num_buckets AS INT64) AS num_buckets,
+    metric,
+    metric_type,
+    key,
+    agg_type,
+    bucket,
+    STRUCT<key STRING, value FLOAT64>(
+      CAST(bucket AS STRING),
+      1.0 * SUM(value)
+    ) AS record
+  FROM bucketed_histograms
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+
+SELECT
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  clients_aggregates.metric,
+  metric_type,
+  key,
+  agg_type,
+  udf_fill_buckets(udf_dedupe_map_sum(
+      ARRAY_AGG(record)
+  ), udf_get_buckets(min_bucket, max_bucket, num_buckets)) AS aggregates
+FROM clients_aggregates
+WHERE min_bucket IS NOT NULL
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, min_bucket, max_bucket, num_buckets
+
+UNION ALL
 
 SELECT
   os,
