@@ -430,7 +430,7 @@ def main(argv, out=print):
         scalar_probes = get_scalar_probes()
         sql_string = get_scalar_probes_sql_strings(scalar_probes, opts["agg_type"])
     else:
-        raise ValueError("agg-type must be one of scalar/histogram")
+        raise ValueError("agg-type must be one of scalar, keyed-scalar, keyed-boolean")
 
     out(
         generate_sql(
