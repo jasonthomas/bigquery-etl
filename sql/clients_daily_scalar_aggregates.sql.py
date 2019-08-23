@@ -329,9 +329,8 @@ def get_scalar_probes_sql_strings(probes, scalar_type):
         )
         probe_structs.append(
             (
-                f"('{probe}', 'boolean', '', 'true', "
-                "sum(case when {probe} = True then 1 else 0 end) "
-                "OVER w1)"
+                f"('{probe}', 'boolean', '', 'true', sum(case when {probe} = True "
+                "then 1 else 0 end) OVER w1)"
             )
         )
 

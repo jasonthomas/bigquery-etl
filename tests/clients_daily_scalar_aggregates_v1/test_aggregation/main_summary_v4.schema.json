@@ -275,6 +275,21 @@
     "mode": "NULLABLE"
   },
   {
+    "type": "BOOLEAN",
+    "name": "scalar_parent_corroborate_system_addons_corrupted",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "BOOLEAN",
+    "name": "scalar_parent_corroborate_omnijar_corrupted",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "BOOLEAN",
+    "name": "scalar_parent_startup_is_cold",
+    "mode": "NULLABLE"
+  },
+  {
     "type": "STRING",
     "name": "default_search_engine_data_name",
     "mode": "NULLABLE"
