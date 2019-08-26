@@ -1,11 +1,11 @@
 [
   {
     "type": "DATE",
-    "name": "submission_date_s3",
+    "name": "submission_date",
     "mode": "REQUIRED"
   },
   {
-    "type": "STRING",
+    "type": "INTEGER",
     "name": "sample_id",
     "mode": "REQUIRED"
   },
@@ -92,11 +92,6 @@
   {
     "type": "STRING",
     "name": "distribution_id",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "STRING",
-    "name": "submission_date",
     "mode": "NULLABLE"
   },
   {
@@ -8651,6 +8646,16 @@
   },
   {
     "type": "INTEGER",
+    "name": "scalar_parent_telemetry_process_creation_timestamp_inconsistent",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
+    "name": "scalar_parent_security_intermediate_preloading_num_preloaded",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
     "name": "scalar_content_telemetry_process_creation_timestamp_inconsistent",
     "mode": "NULLABLE"
   },
@@ -8675,13 +8680,38 @@
     "mode": "NULLABLE"
   },
   {
+    "type": "INTEGER",
+    "name": "scalar_parent_contentblocking_category",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
+    "name": "scalar_parent_devtools_changesview_copy_rule",
+    "mode": "NULLABLE"
+  },
+  {
     "type": "BOOLEAN",
     "name": "user_pref_browser_launcherprocess_enabled",
     "mode": "NULLABLE"
   },
   {
     "type": "INTEGER",
+    "name": "scalar_parent_devtools_changesview_contextmenu_copy_declaration",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
     "name": "scalar_content_script_preloader_mainthread_recompile",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
+    "name": "scalar_parent_devtools_changesview_copy_all_changes",
+    "mode": "NULLABLE"
+  },
+  {
+    "type": "INTEGER",
+    "name": "scalar_parent_script_preloader_mainthread_recompile",
     "mode": "NULLABLE"
   },
   {
@@ -8785,22 +8815,12 @@
   },
   {
     "type": "INTEGER",
-    "name": "scalar_parent_devtools_changesview_copy_all_changes",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
     "name": "scalar_parent_webrtc_peerconnection_datachannel_max_retx_and_life_used",
     "mode": "NULLABLE"
   },
   {
     "type": "INTEGER",
     "name": "scalar_parent_webrtc_peerconnection_datachannel_created",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
-    "name": "scalar_parent_script_preloader_mainthread_recompile",
     "mode": "NULLABLE"
   },
   {
@@ -8830,11 +8850,6 @@
   },
   {
     "type": "INTEGER",
-    "name": "scalar_parent_security_intermediate_preloading_num_preloaded",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
     "name": "scalar_parent_update_startup_downloads_bits_complete_seconds",
     "mode": "NULLABLE"
   },
@@ -8856,16 +8871,6 @@
   {
     "type": "INTEGER",
     "name": "scalar_parent_update_session_intervals_check",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
-    "name": "scalar_parent_contentblocking_category",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
-    "name": "scalar_parent_telemetry_process_creation_timestamp_inconsistent",
     "mode": "NULLABLE"
   },
   {
@@ -8996,16 +9001,6 @@
   {
     "type": "INTEGER",
     "name": "scalar_parent_update_session_downloads_internal_complete_seconds",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
-    "name": "scalar_parent_devtools_changesview_contextmenu_copy_declaration",
-    "mode": "NULLABLE"
-  },
-  {
-    "type": "INTEGER",
-    "name": "scalar_parent_devtools_changesview_copy_rule",
     "mode": "NULLABLE"
   }
 ]
