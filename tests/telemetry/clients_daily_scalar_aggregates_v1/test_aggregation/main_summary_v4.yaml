@@ -16,6 +16,7 @@
   session_restored: 1
   sync_count_desktop: 1
   sync_count_mobile: 1
+  channel: nightly
 - <<: *base
   document_id: avg_2
   active_addons_count: 3
@@ -28,6 +29,7 @@
   session_restored: 3
   sync_count_desktop: 3
   sync_count_mobile: 3
+  channel: nightly
 - &mode_last_1_1
   <<: *base
   document_id: mode_last_1
@@ -211,14 +213,17 @@
   scalar_parent_browser_engagement_max_concurrent_tab_count: 1
   scalar_parent_browser_engagement_max_concurrent_window_count: 1
   scalar_parent_browser_engagement_unique_domains_count: 1
+  channel: release
 - <<: *base
   document_id: max_2
   scalar_parent_browser_engagement_max_concurrent_tab_count: 3
   scalar_parent_browser_engagement_max_concurrent_window_count: 3
   scalar_parent_browser_engagement_unique_domains_count: 3
+  channel: release
 - &sum_1
   <<: *base
   document_id: sum_1
+  channel: release
   aborts_content: 1
   aborts_gmplugin: 1
   aborts_plugin: 1
@@ -296,3 +301,4 @@
   web_notification_shown: 1
 - <<: *sum_1
   document_id: sum_2
+  channel: release
