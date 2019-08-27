@@ -345,8 +345,8 @@ SELECT
   udf_js_get_active_addons(environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.environment.addons.activeAddons")) AS active_addons,
 
   -- Legacy/disabled addon and configuration settings per Bug 1390814. Please note that |disabled_addons_ids| may go away in the future.
---udf_get_disabled_addons(environment.addons.active_addons, payload.addon_details) AS disabled_addons_ids, -- One per item in payload.addonDetails.XPI
---udf_get_theme(environment.addons.theme) AS active_theme,
+  udf_js_get_disabled_addons(environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.payload.addonDetails") AS disabled_addons_ids, -- One per item in payload.addonDetails.XPI
+  udf_get_theme(environment.addons.theme) AS active_theme,
   environment.settings.blocklist_enabled,
   environment.settings.addon_compatibility_check_enabled,
   environment.settings.telemetry_enabled,
@@ -361,13 +361,13 @@ SELECT
   environment.system.gfx.headless AS environment_system_gfx_headless,
 
   -- TODO: Deprecate and eventually remove this field, preferring the top-level user_pref_* fields for easy schema evolution.
---udf_get_old_user_prefs(environment.settings.user_prefs) AS user_prefs,
+udf_get_old_user_prefs(environment.settings.user_prefs) AS user_prefs,
 
---udf_get_events([
---  ("content", payload.processes.content.events),
---  ("dynamic", payload.processes.dynamic.events),
---  ("gfx", payload.processes.gfx.events),
---  ("parent", payload.processes.parent.events)]) AS events,
+udf_js_get_events([
+  ("content", JSON_EXTRACT(additional_properties, "payload.processes.content.events")),
+  ("dynamic", JSON_EXTRACT(additional_properties, "payload.processes.dynamic.events")),
+  ("gpu", JSON_EXTRACT(additional_properties, "payload.processes.gpu.events")),
+  ("parent", JSON_EXTRACT(additional_properties, "payload.processes.parent.events"))]) AS events,
 
   -- bug 1339655
   SAFE_CAST(JSON_EXTRACT_SCALAR(payload.histograms.ssl_handshake_result, "$.values.0") AS INT64) AS ssl_handshake_result_success,
@@ -396,13 +396,13 @@ SELECT
   udf_json_extract_histogram(payload.histograms.plugins_infobar_dismissed).sum AS plugins_infobar_dismissed,
 
   -- bug 1366253 - active experiments
---udf_get_experiments(environment.experiments), -- experiment id->branchname
+udf_get_experiments(JSON_EXTRACT(additional_properties, "$.environment.experiments"))), -- experiment id->branchname
 
   environment.settings.search_cohort,
 
   -- bug 1366838 - Quantum Release Criteria
   environment.system.gfx.features.compositor AS gfx_compositor --,
---udf_get_quantum_ready(environment.settings.e10s_enabled, environment.addons.active_addons, environment.addons.theme) AS quantum_ready,
+  udf_get_quantum_ready(environment.settings.e10s_enabled, environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.environment.addons.activeAddons"), environment.addons.theme) AS quantum_ready,
 
 --udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 150),
 --udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 250),
