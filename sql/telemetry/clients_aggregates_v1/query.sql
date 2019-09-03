@@ -10,7 +10,7 @@ WITH scalar_aggregates AS (
       WHEN 'true' THEN sum(value)
     END AS agg_value
   FROM
-    telemetry.clients_daily_scalar_aggregates_v1
+    clients_daily_scalar_aggregates_v1
   CROSS JOIN
     UNNEST(scalar_aggregates)
   WHERE
