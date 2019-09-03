@@ -1,92 +1,31 @@
-WITH scalars_and_booleans AS
-  -- Aggregate per client without date.
-  (SELECT
-    client_id,
-    os,
-    app_version,
-    app_build_id,
-    channel,
-    aggregate.metric as metric,
-    aggregate.metric_type AS metric_type,
-    aggregate.key AS key,
-    aggregate.agg_type as agg_type,
+WITH scalar_aggregates AS (
+  SELECT
+    * EXCEPT(value, submission_date, scalar_aggregates),
     CASE agg_type
-      WHEN 'max' THEN max(value) OVER w1
-      WHEN 'min' THEN min(value) OVER w1
-      WHEN 'avg' THEN avg(value) OVER w1
-      WHEN 'sum' THEN sum(value) OVER w1
-      WHEN 'false' THEN sum(value) OVER w1
-      WHEN 'true' THEN sum(value) OVER w1
+      WHEN 'max' THEN max(value)
+      WHEN 'min' THEN min(value)
+      WHEN 'avg' THEN avg(value)
+      WHEN 'sum' THEN sum(value)
+      WHEN 'false' THEN sum(value)
+      WHEN 'true' THEN sum(value)
     END AS agg_value
   FROM
-    clients_daily_scalar_aggregates_v1
+    telemetry.clients_daily_scalar_aggregates_v1
   CROSS JOIN
-    UNNEST(scalar_aggregates) AS aggregate
-  WHERE value IS NOT NULL
-  WINDOW
-      -- Aggregations require a framed window
-      w1 AS (
-          PARTITION BY
-              client_id,
-              os,
-              app_version,
-              app_build_id,
-              channel,
-              aggregate.metric,
-              aggregate.metric_type,
-              aggregate.key,
-              aggregate.agg_type)
-  ),
+    UNNEST(scalar_aggregates)
+  WHERE
+    value IS NOT NULL
+  GROUP BY 1,2,3,4,5,6,7,8,9
+),
 
-keyed_scalars AS
-  (SELECT
-      client_id,
-      os,
-      app_version,
-      app_build_id,
-      channel,
-      aggregate.metric as metric,
-      aggregate.metric_type AS metric_type,
-      aggregate.key AS key,
-      aggregate.agg_type as agg_type,
-      CASE agg_type
-        WHEN 'max' THEN max(value) OVER w1
-        WHEN 'min' THEN min(value) OVER w1
-        WHEN 'avg' THEN avg(value) OVER w1
-        WHEN 'sum' THEN sum(value) OVER w1
-        WHEN 'false' THEN sum(value) OVER w1
-        WHEN 'true' THEN sum(value) OVER w1
-      END AS agg_value
-    FROM
-      clients_daily_keyed_scalar_aggregates_v1
-    CROSS JOIN
-      UNNEST(scalar_aggregates) AS aggregate
-    WHERE value IS NOT NULL
-    WINDOW
-        -- Aggregations require a framed window
-        w1 AS (
-            PARTITION BY
-                client_id,
-                os,
-                app_version,
-                app_build_id,
-                channel,
-                aggregate.metric,
-                aggregate.metric_type,
-                aggregate.key,
-                aggregate.agg_type)
-  ),
-
-all_booleans AS
-    (SELECT *
-    FROM scalars_and_booleans
-    WHERE metric_type = "boolean"
-
-    UNION ALL
-
-    SELECT *
-    FROM keyed_scalars
-    WHERE metric_type = "keyed-scalar-boolean"),
+all_booleans AS (
+  SELECT
+    *
+  FROM
+    scalar_aggregates
+  WHERE
+    metric_type in ("boolean", "keyed-scalar-boolean")
+),
 
 boolean_columns AS
   (SELECT
@@ -118,21 +57,10 @@ summed_bools AS
       metric_type,
       key,
       '' AS agg_type,
-      SUM(bool_true) OVER w1 AS bool_true,
-      SUM(bool_false) OVER w1 AS bool_false
+      SUM(bool_true) AS bool_true,
+      SUM(bool_false) AS bool_false
   FROM boolean_columns
-  WINDOW
-    -- Aggregations require a framed window
-    w1 AS (
-        PARTITION BY
-            client_id,
-            os,
-            app_version,
-            app_build_id,
-            channel,
-            metric,
-            metric_type,
-            key)),
+  GROUP BY 1,2,3,4,5,6,7,8,9),
 
 booleans AS
   (SELECT * EXCEPT(bool_true, bool_false),
@@ -148,19 +76,15 @@ booleans AS
   WHERE bool_true > 0 OR bool_false > 0)
 
 SELECT
-  * EXCEPT(agg_value),
-  CAST(agg_value AS STRING) AS agg_value
-FROM scalars_and_booleans
-WHERE metric_type = "scalar"
+  *
+FROM
+  booleans
 
 UNION ALL
 
-SELECT *
-FROM booleans
-
-UNION ALL
-
-SELECT * EXCEPT(agg_value),
-  CAST(agg_value AS STRING) AS agg_value
-FROM keyed_scalars
-WHERE metric_type = "keyed-scalar"
+SELECT
+  * REPLACE(CAST(agg_value AS STRING) AS agg_value)
+FROM
+  scalar_aggregates
+WHERE
+  metric_type in ("scalar", "keyed-scalar")

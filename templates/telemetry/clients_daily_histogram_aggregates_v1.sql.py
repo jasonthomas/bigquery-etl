@@ -30,11 +30,10 @@ def generate_sql(opts, additional_queries, windowed_clause, select_clause):
         '''
           var z = new Array();
           node = JSON.parse(y);
-          Object.keys(node).map(function(key) {
-            value = node[key].toString();
-            z.push(key + ":" + value);
-          });
-          return z
+          for (let [key, value] of Object.entries(node)) {
+            z.push(`${key}:${value}`);
+          }
+          return z;
         ''';
     """
 
@@ -400,18 +399,17 @@ def get_histogram_probes(histogram_type):
     if histograms_field is None:
         return
 
-    for histogram in histograms_field.get("fields", []):
-        main_summary_histograms.add(histogram["name"])
+    for histogram in histograms_field.get("fields", {}):
+        if "name" in histogram:
+            main_summary_histograms.add(histogram["name"])
 
     with urllib.request.urlopen(PROBE_INFO_SERVICE) as url:
         data = json.loads(url.read().decode())
-        histogram_probes = set(
-            [
-                x.replace("histogram/", "").replace(".", "_").lower()
-                for x in data.keys()
-                if x.startswith("histogram/")
-            ]
-        )
+        histogram_probes = {
+            x.replace("histogram/", "").replace(".", "_").lower()
+            for x in data.keys()
+            if x.startswith("histogram/")
+        }
         relevant_probes = histogram_probes.intersection(main_summary_histograms)
         print("relevant probes {}".format(relevant_probes))
         return relevant_probes

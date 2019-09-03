@@ -6,11 +6,10 @@ LANGUAGE js AS
 '''
   var z = new Array();
   node = JSON.parse(y);
-  Object.keys(node).map(function(key) {
-    value = node[key].toString();
-    z.push(key + ":" + value);
-  });
-  return z
+  for (let [key, value] of Object.entries(node)) {
+    z.push(`${key}:${value}`);
+  }
+  return z;
 ''';
 
 
