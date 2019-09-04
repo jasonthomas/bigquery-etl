@@ -1,23 +1,34 @@
-CREATE TEMP FUNCTION udf_exponential_buckets(dmin INT64, dmax INT64, nBuckets INT64)
+CREATE TEMP FUNCTION udf_exponential_buckets(min INT64, max INT64, nBuckets INT64)
 RETURNS ARRAY<FLOAT64>
 LANGUAGE js AS
 '''
-  let logMax = Math.log(dmax);
-  let current = dmin;
+  let logMax = Math.log(max);
+  let current = min;
+  if (current === 0) {
+    current = 1;
+  } // If starting from 0, the second bucket should be 1 rather than 0
   let retArray = [0, current];
   for (let bucketIndex = 2; bucketIndex < nBuckets; bucketIndex++) {
     let logCurrent = Math.log(current);
     let logRatio = (logMax - logCurrent) / (nBuckets - bucketIndex);
     let logNext = logCurrent + logRatio;
-    let nextValue = parseInt(Math.floor(Math.exp(logNext) + 0.5));
-    if (nextValue > current) {
-      current = nextValue;
-    } else {
-      current++;
-    }
+    let nextValue =  Math.round(Math.exp(logNext));
+    current = nextValue > current ? nextValue : current + 1;
     retArray[bucketIndex] = current;
   }
   return retArray
+''';
+
+CREATE TEMP FUNCTION udf_linear_buckets(min INT64, max INT64, nBuckets INT64)
+RETURNS ARRAY<FLOAT64>
+LANGUAGE js AS
+'''
+  let result = [0];
+  for (let i = 1; i < nBuckets; i++) {
+    let linearRange = (min * (nBuckets - 1 - i) + max * (i - 1)) / (nBuckets - 2);
+    result.push(Math.round(linearRange));
+  }
+  return result;
 ''';
 
 CREATE TEMP FUNCTION udf_normalized_sum (arrs STRUCT<key_value ARRAY<STRUCT<key STRING, value INT64>>>)
@@ -59,6 +70,24 @@ RETURNS ARRAY<STRUCT<key STRING, value FLOAT64>> AS (
   )
 );
 
+CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64, metric_type STRING)
+RETURNS ARRAY<STRING> AS (
+  (
+    WITH buckets AS (
+      SELECT
+        CASE
+          WHEN metric_type = 'histogram-exponential'
+          THEN udf_exponential_buckets(min, max, num)
+          ELSE udf_linear_buckets(min, max, num)
+       END AS arr
+    )
+
+    SELECT ARRAY_AGG(CAST(item AS STRING))
+    FROM buckets
+    CROSS JOIN UNNEST(arr) AS item
+  )
+);
+
 CREATE TEMP FUNCTION udf_bucket (
   val FLOAT64,
   min_bucket INT64,
@@ -68,47 +97,10 @@ CREATE TEMP FUNCTION udf_bucket (
 )
 RETURNS FLOAT64 AS (
   -- Bucket `value` into a histogram with min_bucket, max_bucket and num_buckets
-  (WITH
-    buckets AS (
-      SELECT
-        CASE
-          WHEN metric_type = 'histogram-exponential'
-          THEN udf_exponential_buckets(min_bucket, max_bucket, num_buckets)
-          ELSE GENERATE_ARRAY(min_bucket, max_bucket,
-            CASE
-              WHEN ROUND((max_bucket - min_bucket) / num_buckets) < 1 THEN 1
-              ELSE ROUND((max_bucket - min_bucket) / num_buckets)
-            END)
-        END AS bucket_arr
-    )
-
-    SELECT max(bucket)
-    FROM buckets
-    CROSS JOIN unnest(buckets.bucket_arr) AS bucket
-    WHERE val >= bucket
-  )
-);
-
-CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64, metric_type STRING)
-RETURNS ARRAY<STRING> AS (
   (
-    WITH buckets AS (
-      SELECT
-        CASE
-          WHEN metric_type = 'histogram-exponential'
-          THEN udf_exponential_buckets(min, max, num)
-          ELSE
-            GENERATE_ARRAY(min, max,
-            CASE
-              WHEN ROUND((max - min) / num) < 1 THEN 1
-              ELSE ROUND((max - min) / num)
-            END)
-       END AS arr
-    )
-
-    SELECT ARRAY_AGG(CAST(item AS STRING))
-    FROM buckets
-    CROSS JOIN UNNEST(arr) AS item
+    SELECT max(CAST(bucket AS INT64))
+    FROM UNNEST(udf_get_buckets(min_bucket, max_bucket, num_buckets, metric_type)) AS bucket
+    WHERE val >= CAST(bucket AS INT64)
   )
 );
 
