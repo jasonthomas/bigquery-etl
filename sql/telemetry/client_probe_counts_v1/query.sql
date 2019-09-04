@@ -267,7 +267,19 @@ clients_aggregates AS
       1.0 * SUM(value)
     ) AS record
   FROM bucketed_histograms
-  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+  GROUP BY
+    os,
+    app_version,
+    app_build_id,
+    channel,
+    min_bucket,
+    max_bucket,
+    num_buckets,
+    metric,
+    metric_type,
+    key,
+    agg_type,
+    bucket)
 
 SELECT
   os,
@@ -283,7 +295,18 @@ SELECT
   ), udf_get_buckets(min_bucket, max_bucket, num_buckets, metric_type)) AS aggregates
 FROM clients_aggregates
 WHERE min_bucket IS NOT NULL
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, min_bucket, max_bucket, num_buckets
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type,
+  min_bucket,
+  max_bucket,
+  num_buckets
 
 UNION ALL
 
@@ -309,7 +332,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -335,7 +366,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -361,7 +400,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -387,7 +434,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -413,7 +468,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -439,7 +502,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -465,7 +536,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -491,7 +570,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -517,7 +604,15 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type
 
 UNION ALL
 
@@ -543,4 +638,12 @@ SELECT
    END AS aggregates
 FROM
   bucketed_scalars
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+GROUP BY
+  os,
+  app_version,
+  app_build_id,
+  channel,
+  metric,
+  metric_type,
+  key,
+  agg_type

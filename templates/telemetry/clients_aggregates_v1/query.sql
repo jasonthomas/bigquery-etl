@@ -15,7 +15,16 @@ WITH scalar_aggregates AS (
     UNNEST(scalar_aggregates)
   WHERE
     value IS NOT NULL
-  GROUP BY 1,2,3,4,5,6,7,8,9
+  GROUP BY
+    client_id,
+    os,
+    app_version,
+    app_build_id,
+    channel,
+    metric,
+    metric_type,
+    key,
+    agg_type
 ),
 
 all_booleans AS (
