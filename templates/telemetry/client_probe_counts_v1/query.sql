@@ -70,8 +70,17 @@ RETURNS ARRAY<STRUCT<key STRING, value FLOAT64>> AS (
   )
 );
 
-CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64, metric_type STRING)
+CREATE TEMP FUNCTION udf_to_string_arr(buckets ARRAY<INT64>)
 RETURNS ARRAY<STRING> AS (
+  (
+    SELECT ARRAY_AGG(CAST(bucket AS STRING))
+    FROM UNNEST(buckets) AS bucket
+  )
+);
+
+
+CREATE TEMP FUNCTION udf_get_buckets(min INT64, max INT64, num INT64, metric_type STRING)
+RETURNS ARRAY<INT64> AS (
   (
     WITH buckets AS (
       SELECT
@@ -82,7 +91,7 @@ RETURNS ARRAY<STRING> AS (
        END AS arr
     )
 
-    SELECT ARRAY_AGG(CAST(item AS STRING))
+    SELECT ARRAY_AGG(CAST(item AS INT64))
     FROM buckets
     CROSS JOIN UNNEST(arr) AS item
   )
@@ -273,7 +282,7 @@ SELECT
   agg_type,
   udf_fill_buckets(udf_dedupe_map_sum(
       ARRAY_AGG(record)
-  ), udf_get_buckets(min_bucket, max_bucket, num_buckets, metric_type)) AS aggregates
+  ), udf_to_string_arr(udf_get_buckets(min_bucket, max_bucket, num_buckets, metric_type))) AS aggregates
 FROM clients_aggregates
 WHERE min_bucket IS NOT NULL
 GROUP BY
@@ -304,7 +313,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -338,7 +347,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -372,7 +381,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -406,7 +415,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -440,7 +449,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -474,7 +483,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -508,7 +517,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -542,7 +551,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -576,7 +585,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
@@ -610,7 +619,7 @@ SELECT
     WHEN metric_type = 'scalar' OR metric_type = 'keyed-scalar'
     THEN udf_fill_buckets(
       udf_dedupe_map_sum(udf_buckets_to_map(ARRAY_AGG(bucket))),
-      udf_get_buckets(0, 1000, 50, metric_type)
+      udf_to_string_arr(udf_get_buckets(0, 1000, 50, metric_type))
     )
     WHEN metric_type = 'boolean' OR metric_type = 'keyed-scalar-boolean'
     THEN udf_fill_buckets(
