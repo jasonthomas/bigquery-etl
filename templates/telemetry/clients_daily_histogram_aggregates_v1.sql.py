@@ -411,7 +411,6 @@ def get_histogram_probes(histogram_type):
             if x.startswith("histogram/")
         }
         relevant_probes = histogram_probes.intersection(main_summary_histograms)
-        print("relevant probes {}".format(relevant_probes))
         return relevant_probes
 
 

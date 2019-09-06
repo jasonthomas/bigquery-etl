@@ -166,7 +166,23 @@ RETURNS ARRAY<STRUCT<key STRING, value FLOAT64>> AS (
   )
 );
 
-WITH bucketed_scalars AS (
+WITH latest_versions AS (
+  SELECT channel, MAX(CAST(app_version AS INT64)) AS latest_version
+  FROM
+    (SELECT
+      normalized_channel AS channel,
+      SPLIT(application.version, '.')[OFFSET(0)] AS app_version,
+      COUNT(*)
+    FROM `moz-fx-data-shared-prod.telemetry.main`
+    WHERE DATE(submission_timestamp) > DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+    AND normalized_channel IN ("nightly", "beta", "release")
+    GROUP BY 1, 2
+    HAVING COUNT(*) > 1000
+    ORDER BY 1, 2 DESC
+    limit 100)
+  GROUP BY 1),
+
+bucketed_scalars AS (
   SELECT
     client_id,
     os,
@@ -193,7 +209,7 @@ normalized_histograms AS
       os,
       app_version,
       app_build_id,
-      channel,
+      hist_aggs.channel,
       bucket_range.first_bucket,
       bucket_range.last_bucket,
       bucket_range.num_buckets,
@@ -201,14 +217,20 @@ normalized_histograms AS
       aggregate.metric_type AS metric_type,
       aggregate.key AS key,
       aggregate.agg_type as agg_type,
+      latest_version,
       udf_normalized_sum(
         udf_aggregate_map_sum(ARRAY_AGG(STRUCT<key_value ARRAY<STRUCT <key STRING, value INT64>>>(aggregate.value)))) AS aggregates
-    FROM
-      clients_daily_histogram_aggregates_v1
-    CROSS JOIN
+  FROM
+      clients_daily_histogram_aggregates_v1 AS hist_aggs
+  CROSS JOIN
       UNNEST(histogram_aggregates) AS aggregate
-    WHERE ARRAY_LENGTH(value) > 0
-    GROUP BY
+  LEFT JOIN latest_versions
+  ON latest_versions.channel = hist_aggs.channel
+  WHERE ARRAY_LENGTH(value) > 0
+  AND ((hist_aggs.channel = 'release' AND CAST(app_version AS INT64) >= (latest_version - 2))
+  OR (hist_aggs.channel = 'beta' AND CAST(app_version AS INT64) >= (latest_version - 2))
+  OR (hist_aggs.channel = 'nightly' AND CAST(app_version AS INT64) >= (latest_version - 2)))
+  GROUP BY
       client_id,
       os,
       app_version,
@@ -220,7 +242,8 @@ normalized_histograms AS
       aggregate.metric,
       aggregate.metric_type,
       aggregate.key,
-      aggregate.agg_type),
+      aggregate.agg_type,
+      latest_version),
 
 bucketed_histograms AS
   (SELECT
