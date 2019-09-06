@@ -41,6 +41,13 @@ CREATE TEMP FUNCTION udf_get_key(map ANY TYPE, k ANY TYPE) AS (
  )
 );
 CREATE TEMP FUNCTION
+  udf_get_old_user_prefs(user_prefs_json STRING) AS ((
+    SELECT
+      AS STRUCT
+      SAFE_CAST(JSON_EXTRACT_SCALAR(user_prefs_json, "$.dom.ipc.process_count") AS INT64) AS dom_ipc_process_count,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(user_prefs_json, "$.extensions.allow-non_mpc-extensions") AS BOOL) AS extensions_allow_non_mpc_extensions
+));
+CREATE TEMP FUNCTION
   udf_get_plugins_notification_user_action(plugins_notification_user_action STRING) AS (
     ARRAY(
     SELECT
@@ -98,6 +105,46 @@ CREATE TEMP FUNCTION
       UNNEST(search_counts),
       UNNEST([REPLACE(key, "in-content.", "in-content:")]) AS key,
       UNNEST([STRPOS(key, ".")]) AS pos));
+CREATE TEMP FUNCTION
+  udf_get_theme(theme STRUCT<id STRING, blocklisted BOOL, description STRING, name STRING, user_disabled BOOL, app_disabled BOOL, version STRING, scope INT64, foreign_install BOOL, has_binary_components BOOL, install_day INT64, update_day INT64>) AS ((
+  SELECT
+    AS STRUCT
+    IFNULL(theme.id, "MISSING") as id,
+    theme.* EXCEPT (id)
+));
+CREATE TEMP FUNCTION udf_get_user_prefs(user_prefs STRING)
+RETURNS STRUCT<user_pref_browser_launcherprocess_enabled BOOLEAN,
+  user_pref_browser_search_widget_innavbar BOOLEAN,
+  user_pref_browser_search_region STRING,
+  user_pref_extensions_allow_non_mpc_extensions BOOLEAN,
+  user_pref_extensions_legacy_enabled BOOLEAN,
+  user_pref_gfx_webrender_all_qualified BOOLEAN,
+  user_pref_marionette_enabled BOOLEAN,
+  user_pref_privacy_fuzzyfox_enabled BOOLEAN,
+  user_pref_dom_ipc_plugins_sandbox_level_flash INT64,
+  user_pref_dom_ipc_processcount INT64,
+  user_pref_general_config_filename STRING,
+  user_pref_security_enterprise_roots_auto_enabled BOOLEAN,
+  user_pref_security_enterprise_roots_enabled BOOLEAN,
+  user_pref_security_pki_mitm_detected BOOLEAN,
+  user_pref_network_trr_mode INT64> AS ((
+  SELECT AS STRUCT
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.browser.launcherProcess.enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.browser.search.widget.inNavBar') AS BOOL),
+    JSON_EXTRACT_SCALAR(user_prefs, '$.browser.search.region'),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.extensions.allow-non-mpc-extensions') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.extensions.legacy.enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.gfx.webrender.all.qualified') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.marionette.enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.privacy.fuzzyfox.enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.dom.ipc.plugins.sandbox-level.flash') AS INT64),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.dom.ipc.processCount') AS INT64),
+    JSON_EXTRACT_SCALAR(user_prefs, '$.general.config.filename'),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.security.enterprise_roots.auto-enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.security.enterprise_roots.enabled') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.security.pki.mitm_detected') AS BOOL),
+    CAST(JSON_EXTRACT_SCALAR(user_prefs, '$.network.trr.mode') AS INT64)
+));
 CREATE TEMP FUNCTION
   udf_js_get_active_addons(active_addons ARRAY<STRUCT<key STRING,
     value STRUCT<app_disabled BOOL,
@@ -159,6 +206,41 @@ active_addons.forEach((item) => {
 });
 return result;
 """;
+CREATE TEMP FUNCTION
+  udf_js_get_quantum_ready(e10s_enabled BOOL, active_addons ARRAY<STRUCT<key STRING,
+    value STRUCT<app_disabled BOOL,
+    blocklisted BOOL,
+    description STRING,
+    has_binary_components BOOL,
+    install_day INT64,
+    is_system BOOL,
+    name STRING,
+    scope INT64,
+    signed_state INT64,
+    type STRING,
+    update_day INT64>>>,
+  active_addons_json STRING,
+  theme STRUCT<id STRING,
+    blocklisted BOOL,
+    description STRING,
+    name STRING,
+    user_disabled BOOL,
+    app_disabled BOOL,
+    version STRING,
+    scope INT64,
+    foreign_install BOOL,
+    has_binary_components BOOL,
+    install_day INT64,
+    update_day INT64>)
+    RETURNS BOOL
+  LANGUAGE js AS """
+    const activeAddonsExtras = JSON.parse(active_addons_json);
+    return (e10s_enabled &&
+            active_addons.every(a => a.value.is_system || (activeAddonsExtras[a.key] && activeAddonsExtras[a.key].isWebExtension)) &&
+            ["{972ce4c6-7e08-4474-a285-3208198ce6fd}",
+             "firefox-compact-light@mozilla.org",
+             "firefox-compact-dark@mozilla.org"].includes(theme.id));
+  """;
 CREATE TEMP FUNCTION
   udf_max_flash_version(active_plugins ANY TYPE) AS ((
     SELECT
@@ -345,7 +427,7 @@ SELECT
   udf_js_get_active_addons(environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.environment.addons.activeAddons")) AS active_addons,
 
   -- Legacy/disabled addon and configuration settings per Bug 1390814. Please note that |disabled_addons_ids| may go away in the future.
-  udf_js_get_disabled_addons(environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.payload.addonDetails") AS disabled_addons_ids, -- One per item in payload.addonDetails.XPI
+  udf_get_disabled_addons(environment.addons.active_addons, payload.addon_details) AS disabled_addons_ids, -- One per item in payload.addonDetails.XPI
   udf_get_theme(environment.addons.theme) AS active_theme,
   environment.settings.blocklist_enabled,
   environment.settings.addon_compatibility_check_enabled,
@@ -361,13 +443,13 @@ SELECT
   environment.system.gfx.headless AS environment_system_gfx_headless,
 
   -- TODO: Deprecate and eventually remove this field, preferring the top-level user_pref_* fields for easy schema evolution.
-udf_get_old_user_prefs(environment.settings.user_prefs) AS user_prefs,
+  udf_get_old_user_prefs(environment.settings.user_prefs) AS user_prefs,
 
-udf_js_get_events([
-  ("content", JSON_EXTRACT(additional_properties, "payload.processes.content.events")),
-  ("dynamic", JSON_EXTRACT(additional_properties, "payload.processes.dynamic.events")),
-  ("gpu", JSON_EXTRACT(additional_properties, "payload.processes.gpu.events")),
-  ("parent", JSON_EXTRACT(additional_properties, "payload.processes.parent.events"))]) AS events,
+  udf_get_events([
+   ("content", payload.processes.content.events),
+   ("dynamic", payload.processes.dynamic.events),
+   ("gfx", payload.processes.gfx.events),
+   ("parent", payload.processes.parent.events)]) AS events,
 
   -- bug 1339655
   SAFE_CAST(JSON_EXTRACT_SCALAR(payload.histograms.ssl_handshake_result, "$.values.0") AS INT64) AS ssl_handshake_result_success,
@@ -396,58 +478,44 @@ udf_js_get_events([
   udf_json_extract_histogram(payload.histograms.plugins_infobar_dismissed).sum AS plugins_infobar_dismissed,
 
   -- bug 1366253 - active experiments
-udf_get_experiments(JSON_EXTRACT(additional_properties, "$.environment.experiments"))), -- experiment id->branchname
+  udf_get_experiments(environment.experiments), -- experiment id->branchname
 
   environment.settings.search_cohort,
 
   -- bug 1366838 - Quantum Release Criteria
-  environment.system.gfx.features.compositor AS gfx_compositor --,
-  udf_get_quantum_ready(environment.settings.e10s_enabled, environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.environment.addons.activeAddons"), environment.addons.theme) AS quantum_ready,
+  environment.system.gfx.features.compositor AS gfx_compositor,
+  udf_js_get_quantum_ready(environment.settings.e10s_enabled, environment.addons.active_addons, JSON_EXTRACT(additional_properties, "$.environment.addons.activeAddons"), environment.addons.theme) AS quantum_ready,
 
---udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 150),
---udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 250),
---udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 2500),
+udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 150),
+udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 250),
+udf_histogram_to_threshold_count(payload.histograms.gc_max_pause_ms_2, 2500),
 
---udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 150),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 250),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 2500),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 150),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 250),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.gc_max_pause_ms_2, 2500),
 
---udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 150),
---udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 250),
---udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 2500),
+udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 150),
+udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 250),
+udf_histogram_to_threshold_count(payload.histograms.cycle_collector_max_pause, 2500),
 
---udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 150),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 250),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 2500),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 150),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 250),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.cycle_collector_max_pause, 2500),
 
---udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 150),
---udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 250),
---udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 2500),
+udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 150),
+udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 250),
+udf_histogram_to_threshold_count(payload.histograms.input_event_response_coalesced_ms, 2500),
 
---udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 150),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 250),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 2500),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 150),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 250),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.input_event_response_coalesced_ms, 2500),
 
---udf_histogram_to_threshold_count(payload.histograms.ghost_windows, 1),
---udf_histogram_to_threshold_count(payload.processes.content.histograms.ghost_windows, 1),
-
+udf_histogram_to_threshold_count(payload.histograms.ghost_windows, 1),
+udf_histogram_to_threshold_count(payload.processes.content.histograms.ghost_windows, 1),
+udf_get_user_prefs(JSON_EXTRACT(additional_properties, "$.environment.settings.user_prefs")).*,
   /*
+  -- Generate each function (udf_scalar_row etc) from json, basic same structure as get_user_prefs
   TODO
-  udf_get_user_prefs(environment.settings.user_prefs,
-    [("bool", "browser.launcherProcess.enabled"),
-    ("bool", "browser.search.widget.inNavBar"),
-    ("string", "browser.search.region"),
-    ("bool", "extensions.allow-non-mpc-extensions"),
-    ("bool", "extensions.legacy.enabled"),
-    ("bool", "gfx.webrender.all.qualified"),
-    ("bool", "marionette.enabled"),
-    ("bool", "privacy.fuzzyfox.enabled"),
-    ("int", "dom.ipc.plugins.sandbox-level.flash"),
-    ("int", "dom.ipc.processCount"),
-    ("string", "general.config.filename"),
-    ("bool", "security.enterprise_roots.auto-enabled"),
-    ("bool", "security.enterprise_roots.enabled"),
-    ("bool", "security.pki.mitm_detected")]).*,
   udf_scalar_row(STRUCT(
     STRUCT(
       payload.processes.content.scalars AS content,
